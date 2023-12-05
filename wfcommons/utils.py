@@ -123,9 +123,9 @@ def generate_rvs(distribution: Dict, min_value: float, max_value: float) -> floa
 
     params = distribution['params']
     kwargs = params[:-2]
-    rvs: float = max(0.1, getattr(scipy.stats, distribution['name']).rvs(*kwargs, loc=params[-2], scale=params[-1]))
-    return rvs * max_value
-
+    rvs: float = getattr(scipy.stats, distribution['name']).rvs(*kwargs, loc=params[-2], scale=params[-1])
+    rvs = min(1, max(0, rvs)) # to guarantee runtimes are always between min and max values
+    return min_value + rvs*(max_value - min_value)
 
 def ncr(n: int, r: int) -> int:
     """
