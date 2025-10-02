@@ -21,6 +21,7 @@ class MachineSystem(NoValue):
     LINUX = 'linux'
     MACOS = 'macos'
     WINDOWS = 'windows'
+    UNKNOWN = 'unknown'
 
 
 class Machine:
@@ -76,10 +77,9 @@ class Machine:
 
         self.cpu_cores: int = cpu['coreCount']
         self.cpu_speed: int = cpu['speedInMHz'] if 'speedInMHz' in cpu else 0
-        self.cpu_flops: int = cpu['coreCount'] * cpu['speedInMHz'] * 10 ^ 6 if 'speedInMHz' in cpu else 0
         self.cpu_vendor: str = cpu['vendor'] if 'vendor' in cpu else None
 
-        self.logger.debug(f"created machine: {self.name} with {self.cpu_cores} cores and {self.cpu_flops} FLOPS.")
+        self.logger.debug(f"created machine: {self.name} with {self.cpu_cores} cores and clockdate {self.cpu_speed} MHz.")
 
     def as_dict(self) -> Dict[str, Union[int, str]]:
         """A JSON representation of the machine.
@@ -97,9 +97,15 @@ class Machine:
         if self.release:
             machine['release'] = self.release
         if self.cpu_cores:
-            machine['cpu'] = {'coreCount': self.cpu_cores}
+            if 'cpu' not in machine.keys():
+                machine['cpu'] = {}
+            machine['cpu']['coreCount'] = self.cpu_cores
         if self.cpu_speed:
+            if 'cpu' not in machine.keys():
+                machine['cpu'] = {}
             machine['cpu']['speedInMHz'] = self.cpu_speed
         if self.cpu_vendor:
+            if 'cpu' not in machine.keys():
+                machine['cpu'] = {}
             machine['cpu']['vendor'] = self.cpu_vendor
         return machine

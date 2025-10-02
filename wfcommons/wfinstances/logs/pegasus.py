@@ -479,7 +479,7 @@ class PegasusLogsParser(LogsParser):
                     task.bytes_written = bytes_written
 
             # machine
-            task.machine = Machine(
+            machine = Machine(
                 name=data['machine']['uname_nodename'],
                 cpu={
                     'coreCount': data['machine']['cpu_count'],
@@ -491,6 +491,7 @@ class PegasusLogsParser(LogsParser):
                 memory=data['machine']['ram_total'],
                 release=data['machine']['uname_release']
             )
+            task.machines = [machine]
 
         tmp_file.unlink()
 

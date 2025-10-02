@@ -20,7 +20,7 @@ from typing import List, Optional
 
 from .abstract_logs_parser import LogsParser
 from ...common.file import File
-from ...common.machine import Machine
+from ...common.machine import Machine, MachineSystem
 from ...common.task import Task, TaskType
 from ...common.workflow import Workflow
 
@@ -83,9 +83,15 @@ class TaskVineLogsParser(LogsParser):
         self.files_map = {}
         self.task_command_lines = {}
         self.task_runtimes = {}
+        self.workers = {}
+        self.task_workers = {}
         self.task_input_files = {}
         self.task_output_files = {}
+        self.makespan = 0
         self.known_task_ids = []
+        self.wms_name = "TaskVine"
+        self.wms_url = "http://ccl.cse.nd.edu/software/taskvine"
+        self.wms_version = None
 
     def build_workflow(self, workflow_name: Optional[str] = None) -> Workflow:
         """
@@ -102,6 +108,7 @@ class TaskVineLogsParser(LogsParser):
         # create base workflow instance object
         self.workflow = Workflow(name=self.workflow_name,
                                  description=self.description,
+                                 runtime_system_version=None,  # Will be set later
                                  runtime_system_name=self.wms_name,
                                  runtime_system_url=self.wms_url)
 
@@ -133,18 +140,103 @@ class TaskVineLogsParser(LogsParser):
                 to_remove.append(task_id)
         for victim in to_remove:
             self.known_task_ids.remove(victim)
-
         sys.stderr.write(f"Identified {len(self.known_task_ids)} valid tasks\n")
 
         # Construct the input and output file for each task
         self._construct_task_input_output_files()
-        # print("TASK INPUT FILES: " + str(self.task_input_files))
-        # print("TASK OUTPUT FILES: " + str(self.task_output_files))
+        # print("Task input files: " + str(self.task_input_files))
+        # print("Task output files: " + str(self.task_output_files))
+
+        # Construct the workers for each task
+        self._construct_task_workers()
+
+        # Compute the overall workflow makespan
+        self._compute_overall_makespan()
 
         # Construct the workflow
         self._construct_workflow()
 
         return self.workflow
+
+    def _compute_overall_makespan(self) -> None:
+        start_date = 0
+        end_date = 0
+        with open(self.transactions_file) as f:
+            for line in f:
+                if line[0] == "#":
+                    continue
+                date = int(line.split()[0])
+                if start_date == 0:
+                    start_date = date
+                end_date = date
+        self.makespan = float(end_date - start_date) / 1_000_000.0
+
+
+    def _construct_task_workers(self) -> None:
+
+        # Build the map of workers with keys and IP addresses
+        with open(self.transactions_file) as f:
+            for line in f:
+                if " CONNECTION" in line and line[0] != "#":
+                    # 1742250541844548 318561 WORKER worker-244c25b911574b77ca5f789b6fd7b080 CONNECTION 10.32.93.67:35470
+                    tokens = line.split()
+                    worker_key = tokens[3]
+                    worker_ip = tokens[5].split(":")[0]
+                    self.workers[worker_key] = {"ip": worker_ip}
+
+        # Retrieve other relevant information
+        with open(self.debug_file) as f:
+            for line in f:
+                if "running CCTools" in line:
+                    # 2025/05/15 19:35:50.58 vine_manager[3129835]vine: d32cepyc235.crc.nd.edu (10.32.91.237:54604) running CCTools version 8.0.0 on Linux (operating system) with architecture x86_64 is ready
+                    for worker_key in self.workers.keys():
+                        if self.workers[worker_key]["ip"] + ":" in line:
+                            line = line[line.find("vine: ") + len("vine: "):]
+                            tokens = line.split()
+                            hostname = tokens[0]
+                            self.wms_version = "CCTools-version-" + tokens[5]
+                            operating_system = tokens[7]
+                            architecture = tokens[12]
+                            self.workers[worker_key]["hostname"] = hostname
+                            self.workers[worker_key]["operating_system"] = operating_system
+                            self.workers[worker_key]["architecture"] = architecture
+
+        # Create machine objects to replace the dictionaries
+        for worker_key in self.workers.keys():
+            hostname = self.workers[worker_key]["hostname"]
+            if self.workers[worker_key]["operating_system"] == "Linux":
+                operating_system = MachineSystem.LINUX
+            else:
+                operating_system = MachineSystem.UNKNOWN
+
+            architecture = self.workers[worker_key]["architecture"]
+
+            machine = Machine(
+                name=hostname,
+                cpu={
+                    'coreCount': 0,
+                    'speedInMHz': 0,
+                },
+                system=operating_system,
+                architecture=architecture,
+                memory=0,
+                release="unknown"
+            )
+            self.workers[worker_key] = machine
+
+        # Associate a worker to each task
+        with open(self.transactions_file) as f:
+            for line in f:
+                # 1747338058682112 3129835 TASK 3421 RUNNING worker-2d726e856c7e5ce67e67aa882e1cbe75  FIRST_RESOURCES {"time_commit_start":[1747338058.680938,"s"],"time_commit_end":[1747338058.682075,"s"],"time_input_mgr":[0.001137,"s"],"size_input_mgr":[0.001008987426757812,"MB"],"memory":[5333,"MB"],"disk":[15391,"MB"],"gpus":[0,"gpus"],"cores":[1,"cores"]}
+                if " TASK " in line and " RUNNING " in line and "worker-" in line:
+                    tokens = line.split()
+                    task_id = int(tokens[3])
+                    worker_key = tokens[5]
+                    if task_id in self.known_task_ids:
+                        self.task_workers[task_id] = self.workers[worker_key]
+
+
+
 
 
     def _construct_task_command_lines(self) -> None:
@@ -233,7 +325,6 @@ class TaskVineLogsParser(LogsParser):
                 if "file-task" in line:  # Ignoring what I think are taskvine internal/specific things
                     continue
                 line = line[:-1]
-                # print(f"LINE: {line}")
                 [source, ignore, destination] = line.split()
                 # Remove quotes
                 source = source [1:-1]
@@ -241,7 +332,6 @@ class TaskVineLogsParser(LogsParser):
                 # Remove weird file- prefix
                 source = source.replace("--", "-")  # Sometimes there is an unexpected "--"!!
                 destination = destination.replace("--", "-")  # Sometimes there is an unexpected "--"!!
-                # print(f"source: {source}  destination: {destination}")
                 if source.startswith("file-"):
                     source = source[len("file-"):]
                 if destination.startswith("file-"):
@@ -288,7 +378,6 @@ class TaskVineLogsParser(LogsParser):
 
         # Create all tasks
         task_map = {}
-        # print(self.task_runtimes[16])
         for task_id in self.known_task_ids:
             task_name = "Task_%d" % task_id
             task = Task(name=task_name,
@@ -301,6 +390,10 @@ class TaskVineLogsParser(LogsParser):
                         input_files=[file_object_map[filename] for filename in self.task_input_files[task_id]],
                         output_files=[file_object_map[filename] for filename in self.task_output_files[task_id]],
                         logger=self.logger)
+            if task_id in self.task_workers.keys():
+                task.machines = [self.task_workers[task_id]]
+            else:
+                sys.stderr.write(f"Warning: couldn't find a worker/machine associated to task {task_id}.")
             task_map[task_id] = task
             self.workflow.add_task(task)
             # sys.stderr.write(f"Added task {task_name}: {len(self.workflow.tasks)}\n")
@@ -317,3 +410,9 @@ class TaskVineLogsParser(LogsParser):
                 if has_intersection:
                     self.workflow.add_dependency(task_map[task1_id].name, task_map[task2_id].name)
                     # sys.stderr.write(f"Added dependency {task_map[task1_id].name} -> {task_map[task2_id].name}\n")
+
+        # Setting the makespan
+        self.workflow.makespan = self.makespan
+
+        # Setting the runtime system version (after the fact)
+        self.workflow.runtime_system_version = self.wms_version
