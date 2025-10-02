@@ -25,7 +25,7 @@ from ...common.task import Task, TaskType
 from ...common.workflow import Workflow
 
 ####
-## Example logs
+## Example logs provided by the TaskVine team
 ##
 ## https://github.com/cooperative-computing-lab/taskvine-example-logs?tab=readme-ov-file
 ###
