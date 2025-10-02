@@ -200,8 +200,8 @@ class TaskVineLogsParser(LogsParser):
                     # 2025/05/15 19:35:50.58 vine_manager[3129835]vine: d32cepyc235.crc.nd.edu (10.32.91.237:54604) running CCTools version 8.0.0 on Linux (operating system) with architecture x86_64 is ready
                     for worker_key in self.workers.keys():
                         if self.workers[worker_key]["ip"] + ":" in line:
-                            line = line[line.find("vine: ") + len("vine: "):]
-                            tokens = line.split()
+                            edited_line = line[line.find("vine: ") + len("vine: "):]
+                            tokens = edited_line.split()
                             hostname = tokens[0]
                             self.wms_version = "CCTools-version-" + tokens[5]
                             operating_system = tokens[7]
