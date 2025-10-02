@@ -8,15 +8,13 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 
-import json
-import itertools
-import math
 import pathlib
 import sys
+import re
+import fnmatch
 
-from datetime import datetime, timezone
 from logging import Logger
-from typing import List, Optional
+from typing import List, Optional, Union, Pattern
 
 from .abstract_logs_parser import LogsParser
 from ...common.file import File
@@ -42,11 +40,12 @@ class TaskVineLogsParser(LogsParser):
     :param vine_logs_dir: TaskVine's vine-logs directory
     :type vine_logs_dir: pathlib.Path
     :param filenames_to_ignore: TaskVine sometimes considers that executables and package files
-                                are input to tasks. This argument is the list of names of files that should be
+                                are input to tasks. This argument is the list of names of files or glob patterns that should be
                                 ignored in the reconstructed instances, which typically do not include such
                                 files at task input. For instance, if reconstructing a workflow from an execution
-                                of a WfBench-generated benchmark, one could pass ["wfbench", "cpu-benchmark", "stress-ng"]
-    :type filenames_to_ignore: List[str]
+                                of a WfBench-generated benchmark, one could pass ["wfbench", "cpu-benchmark", "stress-ng"]. Or
+                                one could pass something like ["*.py"] to ignore all Python source files.
+    :type filenames_to_ignore: Optional[List[Union[str, Pattern[str]]]]
     :param description: Workflow instance description.
     :type description: Optional[str]
     :param logger: The logger where to log information/warning or errors (optional).
@@ -54,7 +53,7 @@ class TaskVineLogsParser(LogsParser):
     """
     def __init__(self,
                  vine_logs_dir: pathlib.Path,
-                 filenames_to_ignore: Optional[List[str]] = None,
+                 filenames_to_ignore: Optional[List[Union[str, Pattern[str]]]] = None,
                  description: Optional[str] = None,
                  logger: Optional[Logger] = None) -> None:
         """Create an object of the makeflow log parser."""
@@ -78,7 +77,16 @@ class TaskVineLogsParser(LogsParser):
         self.taskgraph_file: pathlib.Path = taskgraph_file
         self.transactions_file: pathlib.Path = transactions_file
 
-        self.filenames_to_ignore: set[str] = set(filenames_to_ignore) or set({})
+        self.filenames_to_ignore : List[Union[str, Pattern[str]]] = filenames_to_ignore
+        self.compiled_patterns_to_ignore = []
+        if filenames_to_ignore:
+            for pattern in filenames_to_ignore:
+                if isinstance(pattern, re.Pattern):
+                    self.compiled_patterns_to_ignore.append(pattern)
+                else:
+                    # Convert glob pattern to regex
+                    regex_pattern = fnmatch.translate(pattern)
+                    self.compiled_patterns_to_ignore.append(re.compile(regex_pattern))
 
         self.files_map = {}
         self.task_command_lines = {}
@@ -89,6 +97,7 @@ class TaskVineLogsParser(LogsParser):
         self.task_output_files = {}
         self.makespan = 0
         self.known_task_ids = []
+        # TODO: Get the next TWO items from workflow.json (overkill?)
         self.wms_name = "TaskVine"
         self.wms_url = "http://ccl.cse.nd.edu/software/taskvine"
         self.wms_version = None
@@ -246,10 +255,10 @@ class TaskVineLogsParser(LogsParser):
                     [task_index] = line[line.find("Task ") + len("Task "):].split()[0:1]
                     command_line = previous_line[previous_line.find("busy on '") + len("busy on '"):-2]
                     self.task_command_lines[int(task_index)] = command_line
-                    executable = command_line.split()[0]
                     # May not be full-proof in case of commands like "export A=b; executable ..." but
                     # may help.....
-                    self.filenames_to_ignore.add(executable)
+                    # executable = command_line.split()[0]
+                    # self.filenames_to_ignore.add(executable)
                 previous_line = line
 
 
@@ -269,7 +278,8 @@ class TaskVineLogsParser(LogsParser):
                     [file_key, filename] = line[line.find("outfile ") + len("outfile "):].split()[:2]
                 else:
                     continue
-                if filename in self.filenames_to_ignore:
+                should_ignore = any(pattern.search(filename) for pattern in self.compiled_patterns_to_ignore)
+                if should_ignore:
                     continue
                 # NOTE THAT THE FILENAME MAY NOT BE UNIQUE IN TASKVINE WORKFLOWS, SO
                 # WE ADD THE KEY
