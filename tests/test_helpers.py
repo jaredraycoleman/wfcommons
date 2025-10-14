@@ -130,3 +130,4 @@ def _compare_workflows(workflow1: Workflow, workflow_2: Workflow):
             workflow2_output_bytes += output_file.size
     assert (workflow1_input_bytes == workflow2_input_bytes)
     assert (workflow1_output_bytes == workflow2_output_bytes)
+

@@ -339,7 +339,7 @@ class TaskVineLogsParser(LogsParser):
                 # Remove quotes
                 source = source [1:-1]
                 destination = destination [1:-2]
-                # Remove weird file- prefix
+                # Remove weird "file-" prefix
                 source = source.replace("--", "-")  # Sometimes there is an unexpected "--"!!
                 destination = destination.replace("--", "-")  # Sometimes there is an unexpected "--"!!
                 if source.startswith("file-"):
